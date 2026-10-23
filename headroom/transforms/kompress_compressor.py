@@ -104,6 +104,24 @@ def _add_kompress_must_keep_words(
             kept_ids.add(word_idx + chunk_start)
 
 
+def _keep_unscored_words(
+    kept_ids: set[int],
+    word_ids: list[int | None],
+    n_chunk_words: int,
+    chunk_start: int,
+) -> None:
+    """Keep words the tokenizer truncated away verbatim.
+
+    A chunk is built by word count but encoded with ``max_length=512``; words
+    past the cut-off get no ``word_id``, so no score or keep decision. Dropping
+    them would be positional data loss, not a model judgement.
+    """
+    scored = {wid for wid in word_ids if wid is not None}
+    for word_idx in range(n_chunk_words):
+        if word_idx not in scored:
+            kept_ids.add(word_idx + chunk_start)
+
+
 _TABULAR_ROW_SPLIT_RE = re.compile(r"\s{2,}")
 
 
@@ -2092,6 +2110,7 @@ class KompressCompressor(Transform):
                 # Hard override: always keep must-keep tokens regardless of model score.
                 # Numbers, error names, paths, and flags carry meaning agents cannot
                 # reconstruct from context. Disable via HEADROOM_KOMPRESS_MUST_KEEP=0.
+                _keep_unscored_words(kept_ids, word_ids, len(chunk_words), chunk_start)
                 _add_kompress_must_keep_words(kept_ids, chunk_words, chunk_start)
 
             for i, line_id in enumerate(line_ids):
@@ -2491,6 +2510,10 @@ class KompressCompressor(Transform):
                         s = float(score_list[idx])
                         if wid not in word_scores or s > word_scores[wid]:
                             word_scores[wid] = s
+
+                    _keep_unscored_words(
+                        kept_ids_per_text[text_idx], word_ids, len(chunk_words), chunk_start
+                    )
 
                     if not word_scores:
                         continue
